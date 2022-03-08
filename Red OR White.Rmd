@@ -1,0 +1,382 @@
+---
+title: "Red and White"
+author: "Made Ots"
+date: "08/03/2022"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+if(!require(readr)) install.packages("readr")
+if(!require(dplyr)) install.packages("dplyr")
+if(!require(tidyr)) install.packages("tidyr")
+if(!require(stringr)) install.packages("stringr")
+if(!require(ggplot2)) install.packages("ggplot2")
+if(!require(gridExtra)) install.packages("gridExtra")
+if(!require(dslabs)) install.packages("dslabs")
+if(!require(ggrepel)) install.packages("ggrepel")
+if(!require(ggthemes)) install.packages("ggthemes")
+if(!require(scales)) install.packages("scales")
+if(!require(DescTools)) install.packages("DescTools")
+if(!require (kableExtra)) install.packages("kableExtra")
+if(!require(tidyverse)) install.packages("tidyverse")
+if(!require(caret)) install.packages("caret")
+if(!require(data.table)) install.packages("data.table")
+if(!require(ROSE)) install.packages("ROSE")
+
+# Load Library
+library(knitr)
+library(ggrepel)
+library(kableExtra)
+library(dslabs)
+library(caret)
+library(tidyverse)
+library(Rborist)
+library(readr)
+library(grid)
+library(gridExtra)
+library(GGally)
+library(rpart)
+library(ROSE)
+
+
+##################################################################################
+# Load the data set, create the validation set (the final hold-out test set)
+##################################################################################
+
+# Load the White Wine
+winequality_white <- read_delim("https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv", ";", 
+                                escape_double = FALSE, col_types = cols(alcohol = col_number(), 
+                                                                        chlorides = col_number(), `citric acid` = col_number(), 
+                                                                        density = col_number(), `fixed acidity` = col_number(), 
+                                                                        `free sulfur dioxide` = col_number(), 
+                                                                        pH = col_number(), quality = col_character(), 
+                                                                        `residual sugar` = col_number(), 
+                                                                        sulphates = col_number(), `total sulfur dioxide` = col_number(), 
+                                                                        `volatile acidity` = col_number()), trim_ws = TRUE)
+
+names(winequality_white)<-make.names(names(winequality_white),unique = TRUE)
+
+# Load the Red Wine
+winequality_red <- read_delim("https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-red.csv", ";", 
+                              escape_double = FALSE, col_types = cols(alcohol = col_number(), 
+                                                                      chlorides = col_number(), `citric acid` = col_number(), 
+                                                                      density = col_number(), `fixed acidity` = col_number(), 
+                                                                      `free sulfur dioxide` = col_number(), 
+                                                                      pH = col_number(), quality = col_character(), 
+                                                                      `residual sugar` = col_number(), 
+                                                                      sulphates = col_number(), `total sulfur dioxide` = col_number(), 
+                                                                      `volatile acidity` = col_number()), trim_ws = TRUE)
+
+names(winequality_red)<-make.names(names(winequality_red),unique = TRUE)
+```
+
+
+## INTRODUCTION
+
+This report is part of HarvardX PH125.9x Capstone project, Choose Your Own Submission.
+My project is inspired from Cassie Kozyrkov's course modules of making Friends With Machine Learning & AI, which are are available freely on Youtube. 
+She is using the wine classification example in the first session of the course. I decided to try and use the wine tasting and wine qualities analysis for my own submission project.
+I am not sure how much of a use this would have in a real world, being that the wine tasting and qualities, like whiskey tasting and qualities, are actually important for quite a small segments of the whole population.
+
+Datasets for Red & White wine used in this project are available from Kaggle -> https://www.kaggle.com/brendan45774/wine-quality
+I have uploaded both data sets to my Github page.
+
+
+## GOAL
+The goal of this analysis is to build a system which is able to predict & recognize, based on existing ratings, is the wine we are given a red one or a white one. I started out analyzing the available data from both sets to see the structure and what information is available, followed with wine quality ratings overview.
+
+
+## INSPECTING THE DATA
+
+# 1. We start with looking into the Headers of both data sets to see what type of information is included.
+Showing the first 5 rows of each file.
+
+White Wine Quality:
+```{r, echo=FALSE, fig.align='center', fig.height=7, message=FALSE}
+winequality_white %>% head(5)
+```
+ 
+Red Wine Quality:      
+```{r, echo=FALSE, message=FALSE, fig.align='center', fig.height=7}
+winequality_red %>% head(5) 
+```
+
+# 2. We are mostly interested in the wine quality rating as our system should be able to predict the wine being red or white based on it, so next we will inspect the rating distributions in both sets.
+
+```{r, echo=FALSE, message=FALSE, fig.align='center', fig.height=4}
+print(plot_white_dis <- winequality_white %>% mutate(count = 1) %>% ggplot() + geom_col(aes(x=quality, y=count)) + ggtitle("White Wine Quality Distribution") + theme(plot.title = element_text(size = 8, face = "bold")))
+```
+
+```{r, echo=FALSE, message=FALSE, fig.align='center', fig.height=4}
+print(plot_red_dis <- winequality_red %>% mutate(count = 1) %>% ggplot() + geom_col(aes(x=quality, y=count)) + ggtitle("Red Wine Quality Distribution") + theme(plot.title = element_text(size = 8, face = "bold")))
+```
+
+The three words sweetness, acidity, and tannin represent three of the major components (parts) of wine. The fourth is alcohol. Besides being one of the reasons we often want to drink a glass of wine in the first place, alcohol is an important player in wine quality.
+Tannin and acidity are hardening elements in a wine (they make a wine taste firmer and less giving in the mouth), while alcohol and sugar (if any) are softening elements. The balance of a wine in the relationship of the hard and the soft aspects of a wine — and a key indicator of quality.
+
+Keeping this in mind, we will now set out to see can we teach our system to predict is the wine we like red wine or white wine.
+
+# 3. Analysing the wine ratings
+
+We will work mostly with White Wine set while training our machine. We start with splitting White Wine data to Test set & Train set.
+
+```{r, echo=FALSE}
+test_index_rating <- createDataPartition(winequality_white$quality, times = 1, p = 0.5, list = FALSE)
+test_set_rating <- winequality_white[test_index_rating, ]
+train_set_rating <- winequality_white[-test_index_rating, ]
+```
+
+In this project I am using the Random Forest and the Rborist package in R to train the algorithms and get the results.
+A Random Forest grows many classification trees and for each output from that tree, it is said that the tree "votes" for that class. A tree is growing using the following steps:
+1. a random sample of rows from the training data will be taken for each tree;
+2. from the sample taken in step 1, a subset of features will be taken to be used for spitting on each tree;
+3. each tree is grown to the largest extent specified by the parameters until it reaches a vote for the class.
+
+The main reason to use a Random Forest instead of a decision tree is to combine the predictions of many decision trees into a single model. The reasoning is that a single even made up of many mediocre models will still be better than one good model. Also, Randome Forests are less prone to over-fitting because of this.
+
+Over-fitting can occur with a flexible model (decision trees) where the model will memorize the Training data and learn any noise in the data as well. This makes it unable to predict the Test data.
+A Random Forest can reduce the high variance from a flexible model like a decision tree by combining many trees into one ensemble model.
+
+
+# 3.1 Ratings in the White Wine set.
+We train our White Wine test set with "caret" function and the Rborist is chosen for the Random Forest as it gives the predFixed  and minNode parameters.
+We already know that the data set mainly focuses on average wines which means that we may encounter a lack of data that describes the wine properties for bad and good wines.
+
+```{r, echo=FALSE, message=FALSE, fig.align='center', fig.width=16, fig.height=4, warning=FALSE}
+# Predict the quality of wine using Rborist. Create train and prediction sets. Validate.
+train_Rborist_rating <- train(quality ~ .,
+                              method = "Rborist",
+                              tuneGrid = data.frame(predFixed = 0, minNode = seq(1, 5, 1)),
+                              data = train_set_rating)
+
+print(train_Rborist_rating$bestTune %>% kable("latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "condensed"), position = "center", font_size = 9, full_width = FALSE) %>% footnote(general = "best tune"))
+
+plot(train_Rborist_rating)
+varImp(train_Rborist_rating, scale = FALSE)
+
+y_hat_Rborist_rating <- predict(train_Rborist_rating, test_set_rating) %>% factor()
+```
+
+Now calculating the accuracy on test set we created:
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Calculating the accuracy
+Accuracy_Rborist_rating <- mean(y_hat_Rborist_rating == test_set_rating$quality)
+Accuracy_Rborist_rating 
+```
+
+Our very first model predicted the quality of ratings with almost 60%, but it far from being usable in any way. To see can we do better, let's see create the confusion matrix.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+test_set_quality_Rborist_rating <- test_set_rating$quality %>% factor()
+confusionMatrix(data = y_hat_Rborist_rating, reference = test_set_quality_Rborist_rating)
+```
+
+# 3.2 Good, Bad & Average ratings - meaning?
+The ratings in the White Wine and Red Wine data sets are given from 0 to 10. To simplify the prediction,we have set the rating parameters to following:
+Good 7 - 10
+Average 4 - 6
+Bad 0 - 3
+We have no idea of what the given numerical ratings on scale 0 - 10 mean, except that we can guess that rating "0" is probably very bad and rating "10" is probably the best.
+Because the ratings were not distributed equally, some ratings were given more often than others. The grouping to Good, Bad & Average may help to increase the accuracy of our predictions.
+White Wine Data set.
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align='center', fig.height=5}
+# To simplify the task, we are changing the quality rating to "good" (7-10), "average" (4-6) and "bad" (rating 0-3)
+winequality_white_GoodAverageBad <- winequality_white %>% mutate(quality_GoodAverageBad = 
+            ifelse(winequality_white$quality == 0, "bad", 
+            ifelse(winequality_white$quality == 1, "bad", 
+            ifelse(winequality_white$quality == 2, "bad", 
+            ifelse(winequality_white$quality == 3, "bad", 
+            ifelse(winequality_white$quality == 4, "average", 
+            ifelse(winequality_white$quality == 5, "average", 
+            ifelse(winequality_white$quality == 6, "average", "good")))))))) %>% dplyr::select(-quality)
+```
+We are creating a new Train Set with our newly set quality ratings.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Create train set, test set - "good", "average" and "bad" rating
+test_index_GoodAverageBad <- createDataPartition(winequality_white_GoodAverageBad$quality_GoodAverageBad, times = 1, p = 0.5, list = FALSE)
+test_set_GoodAverageBad <- winequality_white_GoodAverageBad[test_index_GoodAverageBad, ]
+train_set_GoodAverageBad <- winequality_white_GoodAverageBad[-test_index_GoodAverageBad, ]
+```
+
+Let's see how our simplified qulity ratings are now performing:
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Predicting the quality with Rborist on "good", "average" and "bad" rating Create train and prediction
+train_Rborist_GoodAverageBad <- train(quality_GoodAverageBad ~ .,
+                                      method = "Rborist",
+                                      tuneGrid = data.frame(predFixed = 0, minNode = seq(1, 5, 1)),
+                                      data = train_set_GoodAverageBad)
+```
+
+```{r, echo=FALSE}
+train_Rborist_GoodAverageBad$bestTune %>% kable("latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "condensed"), position = "center", font_size = 9, full_width = FALSE) %>% footnote(general = "best tune")
+
+plot(train_Rborist_GoodAverageBad)
+varImp(train_Rborist_GoodAverageBad, scale = FALSE)
+y_hat_Rborist_GoodAverageBad <- predict(train_Rborist_GoodAverageBad, test_set_GoodAverageBad) %>% factor()
+Accuracy_Rborist_GoodAverageBad <- mean(y_hat_Rborist_GoodAverageBad == test_set_GoodAverageBad$quality_GoodAverageBad)
+
+# Calculating the average
+Accuracy_Rborist_GoodAverageBad 
+```
+
+Our Random Forest prediction accuracy improved significantly after grouping the numerical ratings to Good, Bad & Average. However, some of the information is lost because of the grouping of the quality ratings.
+
+Our accuracy is now around 85%.
+Confusion matrix will let us see in more details:
+
+```{r,echo=FALSE,  message=FALSE, warning=FALSE, fig.align='center', fig.height=5}
+# Create confusion matrix
+test_set_quality_Rborist_GoodAverageBad <- test_set_GoodAverageBad$quality_GoodAverageBad %>% factor()
+confusionMatrix(data = y_hat_Rborist_GoodAverageBad, reference = test_set_quality_Rborist_GoodAverageBad)
+```
+
+In total we have fewer predictions wrong than with previous model which used the numeric ratings instead of grouped ratings. Aso after using the grouping, we can see that the group "Bad" barely exists anymore and majority of ratings are falling into the "Average" category.
+The overall accuracy can be a deceptive measure and the Random Forest was not very good in predicting the "bads" and was very bad in predicting the "goods". It only seemed to work with the averages.
+
+# 3.3 White Wine - Good or Bad?
+When we grouped the wine ratings to Good, Bad & Average, even befor this the Bad raings were almost non-existent. Perhaps we should balance the missing ratings out using only 2 groups for more balanced approach - Good & Bad? The Bad group will include ratings from 0 - 5 and Good group will include ratings from 5 - 10.
+
+Grouping the Good and Bad:
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align='center', fig.height=5}
+# Changing the quality ratings "good" (6-10) and "bad" (rating 0-5)
+winequality_white_GoodBad <- winequality_white %>% mutate(quality_GoodBad = 
+                            ifelse(winequality_white$quality == 0, "bad",   
+                            ifelse(winequality_white$quality == 1, "bad",
+                            ifelse(winequality_white$quality == 2, "bad",
+                            ifelse(winequality_white$quality == 3, "bad", 
+                            ifelse(winequality_white$quality == 4, "bad", 
+                            ifelse(winequality_white$quality == 5, "bad", "good"))))))) %>% dplyr::select(-quality)
+```
+
+Creating the Test and Train set:
+```{r}
+# Creating train set & test set for "good" and "bad" ratings
+test_index_GoodBad <- createDataPartition(winequality_white_GoodBad$quality_GoodBad, times = 1, p = 0.5, list = FALSE)
+test_set_GoodBad <- winequality_white_GoodBad[test_index_GoodBad, ]
+train_set_GoodBad <- winequality_white_GoodBad[-test_index_GoodBad, ]
+```
+
+Predicting the White wine quality with simplified Bad & Good ratings.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Predicting the wine quality with Rborist against "good" and "bad" ratings with new values
+train_Rborist_GoodBad <- train(quality_GoodBad ~ .,
+                               method = "Rborist",
+                               tuneGrid = data.frame(predFixed = 0, minNode = seq(1, 5, 1)),
+                               data = train_set_GoodBad)
+
+train_Rborist_GoodBad$bestTune %>% kable("latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "condensed"), position = "center", font_size = 9, full_width = FALSE) %>% footnote(general = "best tune")
+
+plot(train_Rborist_GoodBad)
+varImp(train_Rborist_GoodBad, scale = FALSE)
+y_hat_Rborist_GoodBad <- predict(train_Rborist_GoodBad, test_set_GoodBad) %>% factor()
+
+#Calculating the accuracy
+Accuracy_Rborist_GoodBad <- mean(y_hat_Rborist_GoodBad == test_set_GoodBad$quality_GoodBad)
+Accuracy_Rborist_GoodBad 
+```
+
+Creating confusion Matrix to see the accuracy:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Creating confusion matrix
+test_set_quality_Rborist_GoodBad <- test_set_GoodBad$quality_GoodBad %>% factor()
+confusionMatrix(data = y_hat_Rborist_GoodBad, reference = test_set_quality_Rborist_GoodBad)
+```
+The goal was to optimize the overall accuracy which is simply defined as the overall proportion that is predicted correctly. It seems that changing the groupings and rating variables didn't cause major improvement in accuracy of the prediction.
+The new Bad group now has some data in it, but it is still far less that the Good group.
+
+# 3.4. Can we balance the White Whine - Good & Bad?
+Often the classification problems turn out to be imbalanced so it is only fair to assume that the data sets may be imbalanced as well. The grouping of the quality rating into 2 classes already seems to be resulting a more balanced data set. We will try to further balance it by over-sampling the minority class.
+
+```{r, echo=FALSE,  message=FALSE, warning=FALSE}
+# Avoiding oversampling and creating balanced train set
+N <- (train_set_GoodBad %>% filter(quality_GoodBad == "good") %>% nrow())*2
+train_set_GoodBad_balanced <- ovun.sample(quality_GoodBad ~ ., data = train_set_GoodBad, method = "over", N = N)$data
+```
+
+We apply the same caret and Rborist functions as previously, except we are now trying to balance the two quality classes of Good and Bad.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Balancing out with Rborist and creating a train set
+train_Rborist_GoodBad_balanced <- train(quality_GoodBad ~ .,
+                                        method = "Rborist",
+                                        tuneGrid = data.frame(predFixed = 0, minNode = seq(1, 5, 1)),
+                                        data = train_set_GoodBad_balanced)
+
+train_Rborist_GoodBad_balanced$bestTune %>% kable("latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "condensed"), position = "center", font_size = 9, full_width = FALSE) %>% footnote(general = "best tune")
+
+plot(train_Rborist_GoodBad_balanced)
+
+varImp(train_Rborist_GoodBad_balanced, scale = FALSE)
+
+y_hat_Rborist_GoodBad_balanced <- predict(train_Rborist_GoodBad_balanced, test_set_GoodBad) %>% factor()
+
+
+# Calculating the accuracy
+Accuracy_Rborist_GoodBad_balanced <- mean(y_hat_Rborist_GoodBad_balanced == test_set_GoodBad$quality_GoodBad)
+Accuracy_Rborist_GoodBad_balanced 
+```
+
+Checking our results with confusion matrix:
+```{r, echo=FALSE }
+# Creating confusion matrix
+confusionMatrix(data = y_hat_Rborist_GoodBad_balanced, reference = test_set_quality_Rborist_GoodBad)
+```
+The Random Forest prediction for quality of wine after grouping the ratings into two balances classes is with a slightly lower accuracy when we hoped. But, the accuracy is now similar in both the Bad and the Good class.
+
+
+## HOW THE PREDICTION MODEL PERFORMS
+We have tried different groupings and it is time to try is our model fitting well.
+All the training and testing in the modelling phase was done on the White Wine Quality data set. From our investigation of both data sets at the beginning of the project we know that they have the same structure and same variables. This means that we are able to validate our model on the Red Wine Quality data set to make sure it's working properly.
+
+We start with joining both data sets.
+```{r}
+# Predicting the type of the wine - joining 2 databases, red and white
+winequality_white_winetype <- winequality_white %>% mutate(wine = "white")
+winequality_red_winetype <- winequality_red %>% mutate(wine = "red")
+winequality_whiteANDred <- winequality_white_winetype %>% full_join(winequality_red_winetype)
+```
+
+Splitting the joined data set into Train and test sets:
+```{r}
+# Creating the train set & test set for the wine type, red or white
+test_index_winetype <- createDataPartition(winequality_whiteANDred$wine, times = 1, p = 0.5, list = FALSE)
+test_set_winetype <- winequality_whiteANDred[test_index_winetype, ] %>% dplyr::select(-quality)
+train_set_winetype <- winequality_whiteANDred[-test_index_winetype, ] %>% dplyr::select(-quality)
+```
+
+We are now trying to fit our Random Forets model to the new data set and see how it performs.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Predicting the Red or White with Rborist, creating train and prediction sets
+train_Rborist_winetype <- train(wine ~ .,
+                                method = "Rborist",
+                                tuneGrid = data.frame(predFixed = 0, minNode = seq(1, 5, 1)),
+                                data = train_set_winetype)
+
+train_Rborist_winetype$bestTune %>% kable("latex", booktabs = T) %>% kable_styling(latex_options = c("striped", "condensed"), position = "center", font_size = 9, full_width = FALSE) %>% footnote(general = "best tune")
+
+plot(train_Rborist_winetype)
+varImp(train_Rborist_winetype, scale = FALSE)
+y_hat_Rborist_winetype <- predict(train_Rborist_winetype, test_set_winetype) %>% factor()
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Creating confusion matrix
+test_set_quality_Rborist_winetype <- test_set_winetype$wine %>% factor()
+confusionMatrix(data = y_hat_Rborist_winetype, reference = test_set_quality_Rborist_winetype)
+```
+The Random Forest managed to predict the type of wine with a very high overall accuracy which shows good prediction capabilities.
+
+
+## CONCLUSIONS
+The random forest predicted with the quality scores from 1 to 10 with an accuracy of approximately 65%. It was mainly good at predicting the average wines. 
+When we advanced and modified our data, the forest started perform with higher accuracy. 
+Random Forest Analysis is widely used in almost every sector - banking,medicines, stock market, e-commerce and etc.
+
+
+
+
