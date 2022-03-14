@@ -10,4 +10,4 @@ Red or White.Rmd -> R Markdown document including the comments and code to creat
 
 Red or White.pdf -> final report in .pdf format
 
-I am not very sure is to teach the machine to predict the wine anyhow applicable in the real world, but it was a fun project to do.
+However, I am not very sure is there any practical application for the  machine to predict the wine in the real world, but it was a fun project to do.
